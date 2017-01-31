@@ -51,35 +51,41 @@ def get_metric(data, metric)
     mtric = metric.split('.')
     if mtric.length == 1
         if !data.nil? and data.has_key?(metric)
-            data[metric]
+            sprintf '%.4f', data[metric].to_f
         else
-            0
+            0.0
         end
     else
         key = mtric.shift
         if data.has_key?(key)
             get_metric(data[key], mtric.join('.'))
         else
-            0
+            0.0
         end
     end
 end
 
 # Main script
+output = ""
 if $0 == __FILE__
     if File.new(__FILE__).flock(File::LOCK_EX | File::LOCK_NB)
         %w[bindings exchanges queues].each do |target|
-            stat = JSON.parse(fetch_url("http://#{RABBITMQ_SERVER}/api/#{target}", RABBITMQ_USER, RABBITMQ_PASS))
+            benchmarks = { 'apicall': 0.0, 'mainscript': 0.0 }
 
+            stime = Time.now
+            stat = JSON.parse(fetch_url("http://#{RABBITMQ_SERVER}/api/#{target}", RABBITMQ_USER, RABBITMQ_PASS))
+            benchmarks[:apicall] = ((Time.now - stime) * 1000.0)
+
+            stime = Time.now
             case target
             when 'bindings'
-                puts "rabbitmq.queues.bindings #{stat.length.to_s}"
+                output << "rabbitmq.queues.bindings #{stat.length.to_s}\r\n"
             when 'exchanges'
                 stat.each do |exchange|
                     exchanges_metrics.sort.each do |metric|
                         value = get_metric(exchange, metric)
                         exchange['name'] = '%2f' if exchange['name'] == ''
-                        puts "rabbitmq.exchanges.#{exchange['name'].gsub(/[ \[\]\/:.]/, '-')}.#{metric} #{value}"
+                        output << "rabbitmq.exchanges.#{exchange['name'].gsub(/[ \[\]\/:.]/, '-')}.#{metric} #{value}\r\n"
                     end
                 end
             when 'queues'
@@ -91,13 +97,17 @@ if $0 == __FILE__
                             totals[metric] = 0
                         end
                         totals[metric] += value.to_i
-                        puts "rabbitmq.queues.#{queue['name'].gsub(/[ \[\]\/:.]/, '-')}.#{metric} #{value}"
+                        output << "rabbitmq.queues.#{queue['name'].gsub(/[ \[\]\/:.]/, '-')}.#{metric} #{value}\r\n"
                     end
                 end
                 totals.sort.each do |metric, value|
-                    puts "rabbitmq.queues.#{metric} #{value}"
+                    output << "rabbitmq.queues.#{metric} #{value}\r\n"
                 end
             end
+            puts output
+            benchmarks[:mainscript] = ((Time.now - stime) * 1000.0)
+            puts sprintf "rabbitmq.diamond_collector.%s.api_call %.4f", target, benchmarks[:apicall]
+            puts sprintf "rabbitmq.diamond_collector.%s.main_script %.4f", target, benchmarks[:mainscript]
         end
     else
         raise "another instance of this program is running"
